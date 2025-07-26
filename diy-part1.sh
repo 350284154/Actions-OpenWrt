@@ -4,15 +4,24 @@
 # File name: diy-part1.sh
 # Description: OpenWrt DIY script part 1 (Before Update feeds)
 #
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
 
-# Uncomment a feed source
-#sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
+# 删除可能存在的旧插件目录，避免冲突
+rm -rf package/luci-app-ssr-plus
+rm -rf package/openwrt-passwall
+rm -rf package/luci-app-passwall
+rm -rf package/luci-app-passwall2
+rm -rf package/luci-app-openclash
 
-# Add a feed source
-echo 'src-git helloworld https://github.com/fw876/helloworld' >>feeds.conf.default
-#echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall' >>feeds.conf.default
+# 克隆 SSR Plus
+git clone --depth=1 -b main https://github.com/fw876/helloworld package/luci-app-ssr-plus
+
+# 克隆 Passwall 和依赖包
+git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall-packages package/openwrt-passwall
+git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall package/luci-app-passwall
+git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall2 package/luci-app-passwall2
+
+# 克隆 OpenClash（使用 sparse checkout 精准拉取）
+git clone --depth=1 --filter=blob:none --sparse https://github.com/vernesong/OpenClash package/luci-app-openclash
+cd package/luci-app-openclash
+git sparse-checkout set luci-app-openclash
+cd -
