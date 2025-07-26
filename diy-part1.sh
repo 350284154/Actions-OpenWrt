@@ -13,7 +13,7 @@ rm -rf package/luci-app-passwall2
 rm -rf package/luci-app-openclash
 
 # 克隆 SSR Plus
-git clone --depth=1 -b main https://github.com/fw876/helloworld package/luci-app-ssr-plus
+echo 'src-git helloworld https://github.com/fw876/helloworld ' >>feeds.conf.default
 
 # 克隆 Passwall 和依赖包
 git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall-packages package/openwrt-passwall
