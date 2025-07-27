@@ -45,6 +45,19 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
+    # ------- 云编译空间彻底清理（建议加在 Initialization environment 后、Clone 前）-------
+    - name: Clean up disk space
+      run: |
+        echo "=== Before cleanup ==="
+        df -hT
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo apt-get remove -y '^ghc-.*' '^dotnet-.*' '^llvm-.*' 'php.*' '^mongodb-.*' '^mysql-.*' '^postgresql-.*' 'google-chrome-stable' '^libmono-.*'
+        sudo apt-get autoremove -y
+        sudo apt-get clean
+        docker rmi $(docker images -q) || true
+        echo "=== After cleanup ==="
+        df -hT
+
     - name: Clone source code
       working-directory: /workdir
       run: |
@@ -61,6 +74,13 @@ jobs:
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
+
+    # ----------- 替换 golang 包 -----------
+    - name: Replace golang package
+      run: |
+        cd openwrt
+        rm -rf feeds/packages/lang/golang
+        git clone https://github.com/kenzok8/golang feeds/packages/lang/golang
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
@@ -119,35 +139,6 @@ jobs:
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
-
-    # 已彻底关闭所有 Release 步骤
-    # - name: Generate release tag
-    #   id: tag
-    #   if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-    #   run: |
-    #     echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-    #     touch release.txt
-    #     [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
-    #     echo "status=success" >> $GITHUB_OUTPUT
-
-    # - name: Upload firmware to release
-    #   uses: softprops/action-gh-release@master
-    #   if: steps.tag.outputs.status == 'success' && !cancelled()
-    #   env:
-    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #   with:
-    #     tag_name: ${{ steps.tag.outputs.release_tag }}
-    #     body_path: release.txt
-    #     files: ${{ env.FIRMWARE }}/*
-
-    # - name: Remove old Releases
-    #   uses: dev-drprasad/delete-older-releases@master
-    #   if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-    #   with:
-    #     keep_latest: 3
-    #     delete_tags: true
-    #   env:
-    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
