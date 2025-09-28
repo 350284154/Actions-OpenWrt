@@ -49,15 +49,13 @@ jobs:
 
     - name: Clean up disk space
       run: |
-        echo "=== Before cleanup ==="
-        df -hT
+        echo "=== Before cleanup ==="; df -hT
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo apt-get remove -y '^ghc-.*' '^dotnet-.*' '^llvm-.*' 'php.*' '^mongodb-.*' '^mysql-.*' '^postgresql-.*' 'google-chrome-stable' '^libmono-.*' || true
         sudo apt-get -y autoremove --purge || true
         sudo apt-get -y clean
         docker rmi $(docker images -q) || true
-        echo "=== After cleanup ==="
-        df -hT
+        echo "=== After cleanup ==="; df -hT
 
     - name: Clone source
       working-directory: /workdir
@@ -70,29 +68,41 @@ jobs:
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+        cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
-    # ====== 关键新增 1：彻底禁用 Rust 工具链/包（在 Install feeds 之前）======
-    - name: Nuke rust toolchain and rust-based packages from feeds
+    # ==== 关键：在安装 feeds 之前干掉 Rust，并给 python3 打补丁 + 提供 rust-values 空壳 ====
+    - name: Remove Rust toolchain & references, patch python3, add stub rust-values.mk
       run: |
+        set -x
         cd openwrt
-        echo "== Diagnose who references rust =="
-        grep -RIn "lang/rust/host\|include.*/rust\.mk" feeds || true
 
-        # 直接移除 rust 工具链与常见 rust 包目录（命名因不同源略有差异，尽可能覆盖）
-        rm -rf feeds/packages/lang/rust
+        # 1) 尽量移除 feeds 里的 Rust 工具链和常见 Rust 包
+        rm -rf feeds/packages/lang/rust || true
         rm -rf feeds/packages/devel/rust* feeds/packages/devel/cargo* || true
-        rm -rf feeds/packages/net/{tuic*,shadow-tls*,sing-box*,singbox*,xray-plugin-rust*,hysteria2*,anytrace-rs*} || true
+        rm -rf feeds/packages/net/{tuic*,shadow-tls*,hysteria2*,sing-box*,singbox*,xray-plugin-rust*} || true
 
-        # 把 makefile 中对 rust 的 include 与依赖移除（防止再次拉起）
+        # 2) 移除 makefile 中对 rust 的 include / 依赖（避免再次被拉起）
         grep -RIl "lang/rust/host" feeds | xargs -r sed -i 's,lang/rust/host,,g'
-        grep -RIl "include.*/rust\.mk" feeds | xargs -r -n1 dirname | xargs -r rm -rf
+        grep -RIl 'include.*/rust\.mk' feeds | xargs -r -n1 dirname | xargs -r rm -rf
 
-    - name: Replace golang package (avoid Go 版本兼容坑)
+        # 3) patch python3：删除对 rust-values.mk 的 include 行（可能位于 host/package 两个 mk）
+        sed -i '/rust\/rust-values\.mk/d' feeds/packages/lang/python/python3-host.mk || true
+        sed -i '/rust\/rust-values\.mk/d' feeds/packages/lang/python/python3-package.mk || true
+
+        # 4) 提供一个最小的“假” rust-values.mk，防止其它包误 include
+        mkdir -p feeds/packages/lang/rust
+        cat > feeds/packages/lang/rust/rust-values.mk <<'EOF'
+# Stub file to bypass Rust toolchain in CI
+RUSTC:=
+CARGO:=
+define SetupRust
+endef
+EOF
+
+    - name: Replace golang package (avoid Go 版本坑)
       run: |
         cd openwrt
         rm -rf feeds/packages/lang/golang
@@ -106,30 +116,27 @@ jobs:
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
+        cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    # ====== 关键新增 2：对 .config 做二次保险强制关掉 rust 相关 ======
-    - name: Force-disable rust-related Kconfig and clean tmp
+    # 再保险：把 .config 里残留的 Rust/tuic 等全关掉
+    - name: Force-disable rust-related Kconfig & clean tmp
       run: |
         cd openwrt
-        # 把 .config 里任何 rust/tuic/shadow 等都删掉或置 n（大小写不敏感）
-        sed -i '/rust/I d'   .config
-        sed -i '/tuic/I d'   .config
+        sed -i '/rust/I d' .config
+        sed -i '/tuic/I d' .config
         sed -i '/shadow/I d' .config
         sed -i '/hysteria2/I d' .config
         sed -i '/sing-.*box/I d' .config
-        # 明确置 n 的常见项（无则忽略）
         for k in \
           CONFIG_LANG_RUST CONFIG_PACKAGE_rust CONFIG_PACKAGE_rustup CONFIG_PACKAGE_cargo \
           CONFIG_PACKAGE_shadow-tls CONFIG_PACKAGE_tuic CONFIG_PACKAGE_hysteria2 \
           CONFIG_PACKAGE_sing-box CONFIG_PACKAGE_singbox CONFIG_PACKAGE_xray-plugin-rust \
         ; do sed -i "/^$k=/d" .config; echo "$k=n" >> .config; done
-
         make defconfig
 
-        # 清掉之前可能生成的 host/rust 残留
-        rm -rf tmp build_dir/host build_dir/hostpkg \
+        # 清除可能的历史残留
+        rm -rf tmp \
+               build_dir/host build_dir/hostpkg \
                build_dir/target-*/*/host/rustc-* \
                staging_dir/hostpkg \
                package/feeds/packages/rust || true
@@ -139,9 +146,9 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        make download -j$(nproc)
+        find dl -size -1024c -exec ls -l {} \; || true
+        find dl -size -1024c -exec rm -f {} \; || true
 
     - name: Compile firmware
       id: compile
@@ -150,7 +157,7 @@ jobs:
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME || true
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
