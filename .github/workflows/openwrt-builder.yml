@@ -76,6 +76,22 @@ jobs:
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
+    # ====== 关键新增 1：彻底禁用 Rust 工具链/包（在 Install feeds 之前）======
+    - name: Nuke rust toolchain and rust-based packages from feeds
+      run: |
+        cd openwrt
+        echo "== Diagnose who references rust =="
+        grep -RIn "lang/rust/host\|include.*/rust\.mk" feeds || true
+
+        # 直接移除 rust 工具链与常见 rust 包目录（命名因不同源略有差异，尽可能覆盖）
+        rm -rf feeds/packages/lang/rust
+        rm -rf feeds/packages/devel/rust* feeds/packages/devel/cargo* || true
+        rm -rf feeds/packages/net/{tuic*,shadow-tls*,sing-box*,singbox*,xray-plugin-rust*,hysteria2*,anytrace-rs*} || true
+
+        # 把 makefile 中对 rust 的 include 与依赖移除（防止再次拉起）
+        grep -RIl "lang/rust/host" feeds | xargs -r sed -i 's,lang/rust/host,,g'
+        grep -RIl "include.*/rust\.mk" feeds | xargs -r -n1 dirname | xargs -r rm -rf
+
     - name: Replace golang package (avoid Go 版本兼容坑)
       run: |
         cd openwrt
@@ -92,6 +108,31 @@ jobs:
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    # ====== 关键新增 2：对 .config 做二次保险强制关掉 rust 相关 ======
+    - name: Force-disable rust-related Kconfig and clean tmp
+      run: |
+        cd openwrt
+        # 把 .config 里任何 rust/tuic/shadow 等都删掉或置 n（大小写不敏感）
+        sed -i '/rust/I d'   .config
+        sed -i '/tuic/I d'   .config
+        sed -i '/shadow/I d' .config
+        sed -i '/hysteria2/I d' .config
+        sed -i '/sing-.*box/I d' .config
+        # 明确置 n 的常见项（无则忽略）
+        for k in \
+          CONFIG_LANG_RUST CONFIG_PACKAGE_rust CONFIG_PACKAGE_rustup CONFIG_PACKAGE_cargo \
+          CONFIG_PACKAGE_shadow-tls CONFIG_PACKAGE_tuic CONFIG_PACKAGE_hysteria2 \
+          CONFIG_PACKAGE_sing-box CONFIG_PACKAGE_singbox CONFIG_PACKAGE_xray-plugin-rust \
+        ; do sed -i "/^$k=/d" .config; echo "$k=n" >> .config; done
+
+        make defconfig
+
+        # 清掉之前可能生成的 host/rust 残留
+        rm -rf tmp build_dir/host build_dir/hostpkg \
+               build_dir/target-*/*/host/rustc-* \
+               staging_dir/hostpkg \
+               package/feeds/packages/rust || true
 
     - name: Download package
       id: package
