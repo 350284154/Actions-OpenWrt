@@ -1,27 +1,37 @@
 #!/bin/bash
-#
 # https://github.com/P3TERX/Actions-OpenWrt
-# File name: diy-part1.sh
-# Description: OpenWrt DIY script part 1 (Before Update feeds)
-#
+# File: diy-part1.sh
+# Description: run before "scripts/feeds update -a"
 
-# 删除可能存在的旧插件目录，避免冲突
-rm -rf package/luci-app-ssr-plus
-rm -rf package/openwrt-passwall
-rm -rf package/luci-app-passwall
-rm -rf package/luci-app-passwall2
-rm -rf package/luci-app-openclash
+set -euo pipefail
 
-# 克隆 SSR Plus
-echo 'src-git helloworld https://github.com/fw876/helloworld ' >>feeds.conf.default
+FEEDS_FILE="feeds.conf.default"
 
-# 克隆 Passwall 和依赖包
-git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall-packages package/openwrt-passwall
-git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall package/luci-app-passwall
-git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall2 package/luci-app-passwall2
+# 1) 在文件开头插入 kenzo / small 源（防重复、可多次执行）
+add_feed_top() {
+  local name="$1" url="$2"
+  if ! grep -qE "^\s*src-git\s+${name}\b" "$FEEDS_FILE"; then
+    # 逐条插到最顶端，保持 kenzo 在 small 之上
+    sed -i "1i src-git ${name} ${url}" "$FEEDS_FILE"
+  fi
+}
 
-# 克隆 OpenClash（使用 sparse checkout 精准拉取）
-git clone --depth=1 --filter=blob:none --sparse https://github.com/vernesong/OpenClash package/luci-app-openclash
-cd package/luci-app-openclash
-git sparse-checkout set luci-app-openclash
-cd -
+add_feed_top "small" "https://github.com/kenzok8/small"
+add_feed_top "kenzo" "https://github.com/kenzok8/openwrt-packages"
+
+# 2) 更新 feeds
+./scripts/feeds update -a
+
+# 3) 清理你不需要/会冲突的包
+rm -rf feeds/luci/applications/luci-app-mosdns || true
+rm -rf feeds/packages/net/{alist,adguardhome,mosdns,xray*,v2ray*,sing*,smartdns} || true
+rm -rf feeds/packages/utils/v2dat || true
+
+# 4) 固定 golang 到 1.25 分支（适配 sing-box / hysteria 等）
+rm -rf feeds/packages/lang/golang
+git clone --depth=1 -b 1.25 https://github.com/kenzok8/golang feeds/packages/lang/golang
+
+# 5) 安装所有 feeds
+./scripts/feeds install -a
+
+echo "[diy-part1] Done: kenzo/small added, feeds updated, cleaned, golang=1.25."
