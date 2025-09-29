@@ -1,9 +1,5 @@
-#
 # https://github.com/P3TERX/Actions-OpenWrt
-#
-# File: .github/workflows/openwrt-bulder.yml
-# Description: Build OpenWrt using GitHub Actions (no auto release)
-#
+# Build OpenWrt using GitHub Actions (no auto release)
 
 name: OpenWrt Builder
 
@@ -35,6 +31,7 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
+        set -eux
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force || true
         sudo -E apt-get -qq update
@@ -51,49 +48,70 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    # 关键新增：安装 Go 1.22.x 作为 GOROOT_BOOTSTRAP（喂给 feeds 的 Go 1.25 引导编译）
-    - name: Install Go 1.22.x as bootstrap
-      run: |
-        set -eux
-        BOOT_VER=1.22.10
-        sudo rm -rf /usr/local/go1.22
-        wget -q https://go.dev/dl/go${BOOT_VER}.linux-amd64.tar.gz
-        sudo mkdir -p /usr/local/go1.22
-        sudo tar -C /usr/local/go1.22 --strip-components=1 -xzf go${BOOT_VER}.linux-amd64.tar.gz
-        /usr/local/go1.22/bin/go version
-        echo "GOROOT_BOOTSTRAP=/usr/local/go1.22" >> $GITHUB_ENV
-
     - name: Clone source code
       working-directory: /workdir
       run: |
+        set -eux
         df -hT $PWD
-        git clone "$REPO_URL" -b "$REPO_BRANCH" openwrt
+        git clone --depth=1 -b "$REPO_BRANCH" "$REPO_URL" openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom feeds
+    - name: Load custom feeds (diy-part1.sh)
       run: |
-        [ -e "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default
-        chmod +x "$DIY_P1_SH"
+        set -eux
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $Diy_P1_SH 2>/dev/null || true
+        chmod +x $DIY_P1_SH
         cd openwrt
-        "$GITHUB_WORKSPACE/$DIY_P1_SH"
+        $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
+    # ===== 安装 Go 1.22.x 作为“bootstrap”，供 Go 1.25 构建时使用 =====
+    - name: Install Go 1.22.x as bootstrap
+      run: |
+        set -eux
+        BOOT_VER=1.22.7
+        sudo rm -rf /opt/go1.22
+        wget -q https://go.dev/dl/go${BOOT_VER}.linux-amd64.tar.gz
+        sudo mkdir -p /opt/go1.22
+        sudo tar -C /opt/go1.22 -xzf go${BOOT_VER}.linux-amd64.tar.gz --strip-components=1
+        echo "GOROOT_BOOTSTRAP=/opt/go1.22" >> $GITHUB_ENV
+        echo "/opt/go1.22/bin" >> $GITHUB_PATH
+        /opt/go1.22/bin/go version
+
+    # （可选）如需固定 feeds 的 golang 为 1.25 分支，保留此步骤
+    - name: Replace golang in feeds to 1.25 branch
+      run: |
+        set -eux
+        cd openwrt
+        rm -rf feeds/packages/lang/golang
+        git clone --depth=1 -b 1.25 https://github.com/kenzok8/golang feeds/packages/lang/golang
+
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Load custom configuration
+    - name: Load custom configuration (diy-part2.sh)
       run: |
+        set -eux
         [ -e files ] && mv files openwrt/files
-        [ -e "$CONFIG_FILE" ] && mv "$CONFIG_FILE" openwrt/.config
-        chmod +x "$DIY_P2_SH"
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
         cd openwrt
-        "$GITHUB_WORKSPACE/$DIY_P2_SH"
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    # 强制清理旧的 .go_bootstrap，确保使用 1.22 重新引导构建 1.25
+    - name: Clean old go bootstrap (force using 1.22)
+      run: |
+        set -eux
+        cd openwrt
+        rm -rf build_dir/hostpkg/go-1.25*/.go_bootstrap || true
 
     - name: Download package
       id: package
       run: |
+        set -eux
         cd openwrt
         make defconfig
         make download -j8
@@ -102,13 +120,14 @@ jobs:
     - name: Compile the firmware
       id: compile
       run: |
+        set -eux
         cd openwrt
         echo -e "$(nproc) thread compile"
-        make -j"$(nproc)" || make -j1 || make -j1 V=s
-        echo "status=success" >> "$GITHUB_OUTPUT"
+        make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME || true
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> "$GITHUB_ENV"
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
     - name: Check space usage
       if: (!cancelled())
@@ -125,11 +144,12 @@ jobs:
       id: organize
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
+        set -eux
         if [ -d openwrt/bin/targets ]; then
-          cd openwrt/bin/targets/*/* || exit 0
+          cd openwrt/bin/targets/*/*
           rm -rf packages
-          echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
-          echo "status=success" >> "$GITHUB_OUTPUT"
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
         else
           echo "No targets output."
         fi
