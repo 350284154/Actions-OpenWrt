@@ -19,19 +19,20 @@ add_feed_top() {
 add_feed_top "small" "https://github.com/kenzok8/small"
 add_feed_top "kenzo" "https://github.com/kenzok8/openwrt-packages"
 
-# 2) 更新 feeds
-./scripts/feeds update -a
-
-# 3) 清理你不需要/会冲突的包
+# 2) 清理你不需要/会冲突的包
+# 注意：这些路径是相对 OpenWrt 根目录的路径（在 YML 中，脚本是在 openwrt 目录外执行的，但在脚本内部路径是相对 openwrt 根目录）
+# 推荐改为相对路径，因为此时 feeds 可能还未更新
+# 在 feeds.conf.default 阶段，这些路径应该不存在，但为了安全保留
 rm -rf feeds/luci/applications/luci-app-mosdns || true
 rm -rf feeds/packages/net/{alist,adguardhome,mosdns,xray*,v2ray*,sing*,smartdns} || true
 rm -rf feeds/packages/utils/v2dat || true
 
-# 4) 固定 golang 到 1.25 分支（适配 sing-box / hysteria 等）
-rm -rf feeds/packages/lang/golang
-git clone --depth=1 -b 1.25 https://github.com/kenzok8/golang feeds/packages/lang/golang
+# 3) 移除 Go 语言处理逻辑，交由 YML 脚本管理
+# rm -rf feeds/packages/lang/golang
+# git clone --depth=1 -b 1.25 https://github.com/kenzok8/golang feeds/packages/lang/golang
 
-# 5) 安装所有 feeds
-./scripts/feeds install -a
+# 4) 移除重复的 feeds update / install
+# ./scripts/feeds update -a
+# ./scripts/feeds install -a
 
-echo "[diy-part1] Done: kenzo/small added, feeds updated, cleaned, golang=1.25."
+echo "[diy-part1] Done: kenzo/small added and old packages cleaned."
