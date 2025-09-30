@@ -1,5 +1,9 @@
+#
 # https://github.com/P3TERX/Actions-OpenWrt
-# Build OpenWrt using GitHub Actions (no auto release)
+#
+# File: .github/workflows/openwrt-bulder.yml
+# Description: Build OpenWrt using GitHub Actions (no auto release)
+#
 
 name: OpenWrt Builder
 
@@ -16,33 +20,25 @@ env:
   DIY_P2_SH: diy-part2.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: false
+  UPLOAD_RELEASE: false     # <--- 这里设为 false，关闭自动发布 Release
   TZ: Asia/Shanghai
-  # Go 引导版本
-  GO_BOOTSTRAP_VER: 1.22.7
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: ⬇️ Checkout Repository
-      uses: actions/checkout@v4 # 推荐使用 v4
+    - name: Checkout
+      uses: actions/checkout@main
 
-    - name: 🛠️ Initialization environment and Cleanup
+    - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        set -eux
-        sudo swapoff -a # 关闭 swap 以释放内存
-        # 彻底清理 Runner 上的缓存和工具包以释放磁盘空间
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-        sudo docker image prune --all --force || true
+        sudo docker image prune --all --force
         sudo -E apt-get -qq update
-        # 精简依赖列表，保留核心
-        sudo -E apt-get -qq install \
-          build-essential ccache libncurses5-dev libncursesw5-dev gawk git gettext libssl-dev \
-          rsync wget unzip python3 python3-setuptools file zlib1g-dev device-tree-compiler
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -52,16 +48,13 @@ jobs:
     - name: Clone source code
       working-directory: /workdir
       run: |
-        set -eux
         df -hT $PWD
-        git clone --depth=1 -b "$REPO_BRANCH" "$REPO_URL" openwrt
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom feeds (diy-part1.sh)
+    - name: Load custom feeds
       run: |
-        set -eux
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        # ⭐ 故障点修正：只使用正确的 $DIY_P1_SH 变量
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
@@ -69,112 +62,86 @@ jobs:
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
-    # ------------------------------------------------------------------
-    # ⭐ Go 环境处理：安装 Go 1.22.x 作为 bootstrap，供构建 Go 1.25 使用
-    # ------------------------------------------------------------------
-    - name: Install Go Bootstrap (${{ env.GO_BOOTSTRAP_VER }})
-      run: |
-        set -eux
-        sudo rm -rf /opt/go-bootstrap
-        wget -q https://go.dev/dl/go${{ env.GO_BOOTSTRAP_VER }}.linux-amd64.tar.gz
-        sudo mkdir -p /opt/go-bootstrap
-        sudo tar -C /opt/go-bootstrap -xzf go${{ env.GO_BOOTSTRAP_VER }}.linux-amd64.tar.gz --strip-components=1
-        echo "GOROOT_BOOTSTRAP=/opt/go-bootstrap" >> $GITHUB_ENV
-        echo "/opt/go-bootstrap/bin" >> $GITHUB_PATH
-        /opt/go-bootstrap/bin/go version
-
-    - name: Replace golang in feeds to 1.25 branch
-      run: |
-        set -eux
-        cd openwrt
-        # 确保移除官方源的 golang
-        rm -rf feeds/packages/lang/golang
-        # 克隆 kenzo 的 1.25 分支
-        git clone --depth=1 -b 1.25 https://github.com/kenzok8/golang feeds/packages/lang/golang
-
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Load custom configuration (diy-part2.sh)
+    - name: Load custom configuration
       run: |
-        set -eux
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
-        make defconfig # 运行 defconfig 确保配置有效
-
-    # 强制清理旧的 .go_bootstrap，确保使用新的 1.22 引导构建 1.25
-    - name: Clean old go bootstrap cache
-      run: |
-        set -eux
-        cd openwrt
-        rm -rf build_dir/hostpkg/go-1.25*/.go_bootstrap || true
 
     - name: Download package
       id: package
       run: |
-        set -eux
         cd openwrt
-        # make defconfig 移到了 diy-part2 后面
+        make defconfig
         make download -j8
-        # 清理不完整的下载文件
-        find dl -size -1024c -exec ls -l {} \; -exec rm -f {} \;
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
 
     - name: Compile the firmware
       id: compile
-      timeout-minutes: 360 # 6 小时超时
       run: |
-        set -eux
         cd openwrt
-        echo -e "Starting $(nproc) thread compile..."
-        # 健壮性编译：并行失败后，回退到单线程详细模式 (V=s)
-        make -j$(nproc) || make -j1 V=s
-        
-        # 检查编译是否成功
-        if [ $? -eq 0 ] && [ -d "bin/targets" ]; then
-            echo "status=success" >> $GITHUB_OUTPUT
-        else
-            echo "status=failure" >> $GITHUB_OUTPUT
-            echo "::error::Compilation failed or target binaries not found."
-            exit 1
-        fi
-        
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME || true
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
     - name: Check space usage
-      if: always()
+      if: (!cancelled())
       run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
 
     - name: Organize files
       id: organize
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true'
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        set -eux
-        # 定位到 targets/*/* 目录
-        FIRMWARE_DIR="openwrt/bin/targets/*/*"
-        if [ -d "$FIRMWARE_DIR" ]; then
-            cd $FIRMWARE_DIR
-            rm -rf packages # 删除 packages 目录
-            echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-            echo "status=success" >> $GITHUB_OUTPUT
-        else
-            echo "::warning::Target firmware directory not found."
-        fi
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware directory
-      uses: actions/upload-artifact@v4 # 推荐使用 v4
-      if: steps.organize.outputs.status == 'success'
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}/*
+        path: ${{ env.FIRMWARE }}
+
+    # 已彻底关闭 Release 步骤
+    # - name: Generate release tag
+    #   id: tag
+    #   if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+    #   run: |
+    #     echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+    #     touch release.txt
+    #     [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+    #     echo "status=success" >> $GITHUB_OUTPUT
+
+    # - name: Upload firmware to release
+    #   uses: softprops/action-gh-release@master
+    #   if: steps.tag.outputs.status == 'success' && !cancelled()
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   with:
+    #     tag_name: ${{ steps.tag.outputs.release_tag }}
+    #     body_path: release.txt
+    #     files: ${{ env.FIRMWARE }}/*
 
     - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@v2 # 推荐使用 v2
+      uses: Mattraks/delete-workflow-runs@main
       with:
         retain_days: 0
         keep_minimum_runs: 2
-        delete_run_by_conclusion: success # 只删除成功的运行记录
