@@ -1,20 +1,27 @@
 #!/bin/bash
+#
 # https://github.com/P3TERX/Actions-OpenWrt
-# File: diy-part1.sh
-# Description: Add fw876/helloworld repository for luci-app-ssr-plus.
+# File name: diy-part1.sh
+# Description: OpenWrt DIY script part 1 (Before Update feeds)
+#
 
-set -euo pipefail
+# 删除可能存在的旧插件目录，避免冲突
+rm -rf package/luci-app-ssr-plus
+rm -rf package/openwrt-passwall
+rm -rf package/luci-app-passwall
+rm -rf package/luci-app-passwall2
+rm -rf package/luci-app-openclash
 
-# 1. 确保 package 目录存在
-mkdir -p package
+# 克隆 SSR Plus
+git clone --depth=1 -b main https://github.com/fw876/helloworld package/luci-app-ssr-plus
 
-# 2. 克隆 fw876/helloworld 仓库到 package 目录
-# 使用 --depth 1 进行浅克隆，以节省云编译的空间和时间
-echo "[diy-part1] Cloning fw876/helloworld into package/helloworld..."
-if [ ! -d package/helloworld ]; then
-    git clone --depth 1 https://github.com/fw876/helloworld.git package/helloworld
-else
-    echo "[diy-part1] package/helloworld already exists, skipping clone."
-fi
+# 克隆 Passwall 和依赖包
+git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall-packages package/openwrt-passwall
+git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall package/luci-app-passwall
+git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall2 package/luci-app-passwall2
 
-echo "[diy-part1] Done: fw876/helloworld added."
+# 克隆 OpenClash（使用 sparse checkout 精准拉取）
+git clone --depth=1 --filter=blob:none --sparse https://github.com/vernesong/OpenClash package/luci-app-openclash
+cd package/luci-app-openclash
+git sparse-checkout set luci-app-openclash
+cd -
