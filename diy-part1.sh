@@ -16,12 +16,12 @@ rm -rf package/luci-app-openclash
 git clone --depth=1 -b main https://github.com/fw876/helloworld package/luci-app-ssr-plus
 
 # 克隆 Passwall 和依赖包
-git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall-packages package/openwrt-passwall
-git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall package/luci-app-passwall
-git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall2 package/luci-app-passwall2
+# git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall-packages package/openwrt-passwall
+# git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall package/luci-app-passwall
+# git clone --depth=1 https://github.com/xiaorouji/openwrt-passwall2 package/luci-app-passwall2
 
 # 克隆 OpenClash（使用 sparse checkout 精准拉取）
-git clone --depth=1 --filter=blob:none --sparse https://github.com/vernesong/OpenClash package/luci-app-openclash
-cd package/luci-app-openclash
-git sparse-checkout set luci-app-openclash
+# git clone --depth=1 --filter=blob:none --sparse https://github.com/vernesong/OpenClash package/luci-app-openclash
+# cd package/luci-app-openclash
+# git sparse-checkout set luci-app-openclash
 cd -
